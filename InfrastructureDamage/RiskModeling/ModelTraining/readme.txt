@@ -1,0 +1,1 @@
+To train the model we take the results from the data preparation step and after manually checking for errors or data that showed limited usefulness, we ended up with the AshFormatted.csv as the input file to the attached rJAGS code. The code takes in the data, reparses it into variables that can be read by the model and trains the system of equations over 20,000 iterations.

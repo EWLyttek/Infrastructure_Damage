@@ -1,0 +1,369 @@
+setwd("//MSFS01/Users/boberle/Scholar/Coauthor/Lyttel")
+library(tidyverse)
+ash<-read_csv("samplejoin.csv")
+
+#calculating decimal dates of measurements
+library("lubridate")
+ash$MEASYR<-decimal_date(as.Date(paste(ash$MEASYEAR,ash$MEASMON,ash$MEASDAY,sep="-")))
+
+################Selecting variables of interest and formatting dataframes by the number of measurements########
+#pivoting a table with covariate data and additional relevant measurements by the unique stem MARKER
+ASHALL<-ash%>%pivot_wider(.,id_cols=MARKER,names_from=INVYR_A,values_from=c("DECAYCD","DIA","TPHA","ACTUALHT","INVYR_B","MEASYR"),names_sort=TRUE)
+
+#removing the NAs
+ALL<-list()
+for(i in 1:(dim(ASHALL)[1])){
+a<-ASHALL[i,!is.na(c(ASHALL[i,]))];
+ALL[[i]]<-paste0(a[-1]);
+}
+
+#introducing NA for the one height measurement that was not in the original dataset
+which.ht.na<-which(lengths(ALL)%%6!=0)
+ALL[[which.ht.na]][8:12]<-ALL[[which.ht.na]][7:11]
+ALL[[which.ht.na]][7]<-"NA"
+names(ALL)<-ASHALL$MARKER
+
+#subsetting by the number of remeasurements
+ASH.single<-ALL[lengths(ALL)==6]
+ASH.double<-ALL[lengths(ALL)==12]
+ASH.triple<-ALL[lengths(ALL)==18]
+
+#reformatting the singly measured snags as a dataframe
+ash.single<-as.numeric(t(data.frame(ASH.single)))
+dim(ash.single)<-c(length(ASH.single),6)
+row.names(ash.single)<-names(ASH.single)
+
+#reformatting the doubly measured snags as a dataframe
+ash.double<-as.numeric(t(data.frame(ASH.double)))
+dim(ash.double)<-c(length(ASH.double),12)
+row.names(ash.double)<-names(ASH.double)
+
+#reformatting the singly measured snags as a dataframe
+ash.triple<-as.numeric(t(data.frame(ASH.triple)))
+dim(ash.triple)<-c(length(ASH.triple),18)
+row.names(ash.triple)<-names(ASH.triple)
+
+##############Correction for rejuvinated snags################
+#correct lower decay classes: 24 in double measures, 16 in first remeasure of triple, 9 in second remeasure
+#correction for doubly remeasured
+ash.double[,1]<-ifelse(ash.double[,1]>ash.double[,2],ash.double[,2],ash.double[,1])
+
+#correction for triply remeasured
+ash.triple[,2]<-ifelse(ash.triple[,2]>ash.triple[,3],ash.triple[,3],ash.triple[,2])
+ash.triple[,1]<-ifelse(ash.triple[,1]>ash.triple[,2],ash.triple[,2],ash.triple[,1])
+
+
+############Creating vectors for analysis by number of remeasurements by identifying####
+############ initial decay class (DC0), initial DBH (DBH0) and initial TPH (TPH0)#######
+############and the outcome at the end of the interval (DCT) with fallen as DC6)########
+
+#data for 1x measured stems that fell because they were not in a subsequent inventory
+DC0.1f<-ash.single[ash.single[,5]<2016,1]
+DBH0.1f<-ash.single[ash.single[,5]<2016,2]
+TPH0.1f<-ash.single[ash.single[,5]<2016,3]
+DCt.1f<-rep(6,length(DC0.1f))
+
+#data for 2x measured stems that remained standing
+DC0.2s<-ash.double[,1]
+DBH0.2s<-ash.double[,3]
+TPH0.2s<-ash.double[,5]
+DCt.2s<-ash.double[,2]
+#data for 2x measured stems that fell because they were not in a subsequent inventory
+DC0.2f<-ash.double[ash.double[,10]<2016,2]
+DBH0.2f<-ash.double[ash.double[,10]<2016,4]
+TPH0.2f<-ash.double[ash.double[,10]<2016,6]
+DCt.2f<-rep(6,length(DC0.2f))
+
+#data for 3x measured stems that remained standing during interval a
+DC0.3sa<-ash.triple[,1]
+DBH0.3sa<-ash.triple[,4]
+TPH0.3sa<-ash.triple[,7]
+DCt.3sa<-ash.triple[,2]
+#data for 3x measured stems that remained standing during interval b
+DC0.3sb<-ash.triple[,2]
+DBH0.3sb<-ash.triple[,5]
+TPH0.3sb<-ash.triple[,8]
+DCt.3sb<-ash.triple[,3]
+#data for 3x measured stems that fell because they were not in a subsequent inventory
+DC0.3f<-ash.triple[ash.triple[,15]<2016,3]
+DBH0.3f<-ash.triple[ash.triple[,15]<2016,6]
+TPH0.3f<-ash.triple[ash.triple[,15]<2016,9]
+DCt.3f<-rep(6,length(DC0.3f))
+
+# concatentating vectors and creating a dataframe
+DC0<-c(DC0.1f,DC0.2s,DC0.2f,DC0.3sa,DC0.3sb,DC0.3f)
+DBH0<-c(DBH0.1f,DBH0.2s,DBH0.2f,DBH0.3sa,DBH0.3sb,DBH0.3f)
+TPH0<-c(TPH0.1f,TPH0.2s,TPH0.2f,TPH0.3sa,TPH0.3sb,TPH0.3f)
+DCt<-c(DCt.1f,DCt.2s,DCt.2f,DCt.3sa,DCt.3sb,DCt.3f)
+
+ash.data<-data.frame(DC0,DBH0,TPH0,DCt)
+
+#formatting data for analysis, by initial decay class
+
+#DC 1
+DC1only<-ash.data[ash.data$DC0==1,]
+#z-standardizing the covariates
+DC1DBHz<-(DC1only$DBH0-mean(DC1only$DBH0))/sd(DC1only$DBH0)
+DC1TPHz<-(DC1only$TPH0-mean(DC1only$TPH0))/sd(DC1only$TPH0)
+y1<-DC1only$DCt
+#data for jags separate models
+dataDC1j = list(
+    DBH = DC1DBHz,
+	TPH = DC1TPHz,
+    y1 = y1,
+    nDC1 = dim(DC1only)[1]
+  )
+
+#DC 2 
+DC2only<-ash.data[ash.data$DC0==2,]
+#z-standardizing the covariates
+DC2DBHz<-(DC2only$DBH0-mean(DC2only$DBH0))/sd(DC2only$DBH0)
+DC2TPHz<-(DC2only$TPH0-mean(DC2only$TPH0))/sd(DC2only$TPH0)
+y2<-DC2only$DCt-1
+#data for jags separate models
+dataDC2j = list(
+    DBH = DC2DBHz,
+	TPH = DC2TPHz,
+    y2 = y2,
+    nDC2 = dim(DC2only)[1]
+  )  
+
+#DC 3 
+DC3only<-ash.data[ash.data$DC0==3,]
+#z-standardizing the covariates
+DC3DBHz<-(DC3only$DBH0-mean(DC3only$DBH0))/sd(DC3only$DBH0)
+DC3TPHz<-(DC3only$TPH0-mean(DC3only$TPH0))/sd(DC3only$TPH0)
+y3<-DC3only$DCt-2
+#data for jags separate models
+dataDC3j = list(
+    DBH = DC3DBHz,
+	TPH = DC3TPHz,
+    y3 = y3,
+    nDC3 = dim(DC3only)[1]
+  )
+  
+#DC 4 
+DC4only<-ash.data[ash.data$DC0==4,]
+#z-standardizing the covariates
+DC4DBHz<-(DC4only$DBH0-mean(DC4only$DBH0))/sd(DC4only$DBH0)
+DC4TPHz<-(DC4only$TPH0-mean(DC4only$TPH0))/sd(DC4only$TPH0)
+y4<-DC4only$DCt-3
+#data for jags separate models
+dataDC4j = list(
+    DBH = DC4DBHz,
+	TPH = DC4TPHz,
+    y4 = y4,
+    nDC4 = dim(DC4only)[1]
+  )
+
+#DC 5 
+DC5only<-ash.data[ash.data$DC0==5,]
+#z-standardizing the covariates
+DC5DBHz<-(DC5only$DBH0-mean(DC5only$DBH0))/sd(DC5only$DBH0)
+DC5TPHz<-(DC5only$TPH0-mean(DC5only$TPH0))/sd(DC5only$TPH0)
+y5<-DC5only[,4]-5
+#data for jags separate models
+dataDC5j = list(
+    DBH = DC5DBHz,
+	TPH = DC5TPHz,
+    y5 = y5,
+    nDC5 = dim(DC5only)[1]
+  )  
+
+#######################
+####code for master model
+library(rjags)
+
+#data for jags master model
+dataDCX = list(
+    DBH1 = DC1DBHz,
+	TPH1 = DC1TPHz,
+    y1 = y1,
+    nDC1 = dim(DC1only)[1],
+	    DBH2 = DC2DBHz,
+	TPH2 = DC2TPHz,
+    y2 = y2,
+    nDC2 = dim(DC2only)[1],
+	    DBH3 = DC3DBHz,
+	TPH3 = DC3TPHz,
+    y3 = y3,
+    nDC3 = dim(DC3only)[1],
+	    DBH4 = DC4DBHz,
+	TPH4 = DC4TPHz,
+    y4 = y4,
+    nDC4 = dim(DC4only)[1],
+	    DBH5 = DC5DBHz,
+	TPH5 = DC5TPHz,
+    y5 = y5,
+    nDC5 = dim(DC5only)[1]
+  )  
+
+#master model with shared coefficients for transitioning decay classes or falling across all initial decay classes
+#Simon Jackman (Stanford)
+DCXmodel<-'
+model{
+#softmax / multinomial regression for snags that begin in DC1
+for(i in 1:nDC1){
+#reference category is remaining in the same decay class
+mu1[i,1] <- 0
+#advancing from reference DC has unique intercept and shared coefficients
+mu1[i,2] <- beta.12 + beta.DBHs*DBH1[i] + beta.TPHs*TPH1[i]
+mu1[i,3] <- beta.13 + beta.DBHs*DBH1[i] + beta.TPHs*TPH1[i]
+mu1[i,4] <- beta.14 + beta.DBHs*DBH1[i] + beta.TPHs*TPH1[i]
+mu1[i,5] <- beta.15 + beta.DBHs*DBH1[i] + beta.TPHs*TPH1[i]
+#transitions from reference DC has unique intercept and coefficients
+mu1[i,6] <- beta.1f + beta.DBHf*DBH1[i] + beta.TPHf*TPH1[i]
+## loop over outcomes applying softmax transformation
+for(j in 1:6){ 
+emu1[i,j] <- exp(mu1[i,j])
+p1[i,j] <- emu1[i,j]/sum(emu1[i,1:6])
+}
+y1[i] ~ dcat(p1[i,1:6]) #transitions treated as stochastic
+}
+
+#softmax / multinomial regression for snags that begin in DC2
+for(i in 1:nDC2){
+#reference category is remaining in the same decay class
+mu2[i,1] <- 0
+#advancing from reference DC has unique intercept and shared coefficients
+mu2[i,2] <- beta.23 + beta.DBHs*DBH2[i] + beta.TPHs*TPH2[i]
+mu2[i,3] <- beta.24 + beta.DBHs*DBH2[i] + beta.TPHs*TPH2[i]
+mu2[i,4] <- beta.25 + beta.DBHs*DBH2[i] + beta.TPHs*TPH2[i]
+#transitions from reference DC has unique intercept and coefficients
+mu2[i,5] <- beta.2f + beta.DBHf*DBH2[i] + beta.TPHf*TPH2[i]
+## loop over outcomes applying softmax transformation
+for(j in 1:5){ 
+emu2[i,j] <- exp(mu2[i,j])
+p2[i,j] <- emu2[i,j]/sum(emu2[i,1:5])
+}
+y2[i] ~ dcat(p2[i,1:5]) #transitions treated as stochastic
+}
+
+#softmax / multinomial regression for snags that begin in DC3
+for(i in 1:nDC3){
+#reference category is remaining in the same decay class
+mu3[i,1] <- 0
+#advancing from reference DC has unique intercept and shared coefficients
+mu3[i,2] <- beta.34 + beta.DBHs*DBH3[i] + beta.TPHs*TPH3[i]
+mu3[i,3] <- beta.35 + beta.DBHs*DBH3[i] + beta.TPHs*TPH3[i]
+#transitions from reference DC has unique intercept and coefficients
+mu3[i,4] <- beta.3f + beta.DBHf*DBH3[i] + beta.TPHf*TPH3[i]
+## loop over outcomes applying softmax transformation
+for(j in 1:4){ 
+emu3[i,j] <- exp(mu3[i,j])
+p3[i,j] <- emu3[i,j]/sum(emu3[i,1:4])
+}
+y3[i] ~ dcat(p3[i,1:4]) #transitions treated as stochastic
+}
+
+#softmax / multinomial regression for snags that begin in DC4
+for(i in 1:nDC4){
+#reference category is remaining in the same decay class
+mu4[i,1] <- 0
+#advancing from reference DC has unique intercept and shared coefficients
+mu4[i,2] <- beta.45 + beta.DBHs*DBH4[i] + beta.TPHs*TPH4[i]
+#transitions from reference DC has unique intercept and coefficients
+mu4[i,3] <- beta.4f + beta.DBHf*DBH4[i] + beta.TPHf*TPH4[i]
+## loop over outcomes applying softmax transformation
+for(j in 1:3){ 
+emu4[i,j] <- exp(mu4[i,j])
+p4[i,j] <- emu4[i,j]/sum(emu4[i,1:3])
+}
+y4[i] ~ dcat(p4[i,1:3]) #transitions treated as stochastic
+}
+
+#conventional logistic regression for snags that begin in DC5
+for(i in 1:nDC5){
+logit(p5[i])<-beta.5f+beta.DBHf*DBH5[i] + beta.TPHf*TPH5[i]
+y5[i]~dbern(p5[i])
+}
+
+
+#Priors for intercepts
+beta.12~dnorm(0,0.0001)
+beta.13~dnorm(0,0.0001)
+beta.14~dnorm(0,0.0001)
+beta.15~dnorm(0,0.0001)
+beta.1f~dnorm(0,0.0001)
+beta.23~dnorm(0,0.0001)
+beta.24~dnorm(0,0.0001)
+beta.25~dnorm(0,0.0001)
+beta.2f~dnorm(0,0.0001)
+beta.34~dnorm(0,0.0001)
+beta.35~dnorm(0,0.0001)
+beta.3f~dnorm(0,0.0001)
+beta.45~dnorm(0,0.0001)
+beta.4f~dnorm(0,0.0001)
+beta.5f~dnorm(0,0.0001)
+
+#PRIORS FOR COEFFICIENTS
+beta.DBHs~dnorm(0,0.0001)
+beta.DBHf~dnorm(0,0.0001)
+beta.TPHs~dnorm(0,0.0001)
+beta.TPHf~dnorm(0,0.0001)
+}'
+
+writeLines(DCXmodel,con="modelX.txt")
+DCXa<-jags.model(file="modelX.txt",data=dataDCX, n.chains = 3, n.adapt=1000, quiet=FALSE)
+DCXs<-coda.samples(DCXa,c("beta.12",  "beta.13" , "beta.14" , "beta.15", "beta.1f" , "beta.23" , "beta.24" , "beta.25", "beta.2f", "beta.34" , "beta.35", "beta.3f","beta.45", "beta.4f","beta.5f","beta.DBHs","beta.DBHf","beta.TPHs","beta.TPHf"),20000)
+
+#####################################
+#####CODE FOR ONLY 1 DECAY CLASS#####
+
+library(rjags)
+
+#DC 1
+DC1only<-ash.data[ash.data$DC0==1,]
+#z-standardizing the covariates
+DC1DBHz<-(DC1only$DBH0-mean(DC1only$DBH0))/sd(DC1only$DBH0)
+DC1TPHz<-(DC1only$TPH0-mean(DC1only$TPH0))/sd(DC1only$TPH0)
+#creating the response matrix, adding unobserved decay classes
+y1<-data.frame(model.matrix(~as.factor(DC1only$DCt)-1))
+y1$FALL<-y1[,5]
+y1[,5]<-rep(0,length(DC1DBHz))
+colnames(y1)<-1:6
+
+#data for jags
+dataDC1j = list(
+    DBH = DC1DBHz,
+	TPH = DC1TPHz,
+    y1 = y1,
+    nDC1 = dim(DC1only)[1]
+  )
+
+
+DC1modeljs<-'
+model{
+for(i in 1:nDC1){
+#reference category is remaining in the same decay class
+mu[i,1] <- 0
+#advancing from reference DC has unique intercept and shared coefficients
+mu[i,2] <- beta.12 + beta.DBHs*DBH[i] + beta.TPHs*TPH[i]
+mu[i,3] <- beta.13 + beta.DBHs*DBH[i] + beta.TPHs*TPH[i]
+mu[i,4] <- beta.14 + beta.DBHs*DBH[i] + beta.TPHs*TPH[i]
+mu[i,5] <- beta.15 + beta.DBHs*DBH[i] + beta.TPHs*TPH[i]
+#falling from reference DC has unique intercept and coefficients
+mu[i,6] <- beta.1f + beta.DBHf*DBH[i] + beta.TPHf*TPH[i]
+## loop over outcomes applying softmax transformation
+for(j in 1:6){ 
+emu[i,j] <- exp(mu[i,j])
+p[i,j] <- emu[i,j]/sum(emu[i,1:6])
+}
+y1[i,] ~ dcat(p[i,1:6]) #falling treated as stochastic
+}
+#Priors for intercepts and coefficients
+beta.12~dnorm(0,0.0001)
+beta.13~dnorm(0,0.0001)
+beta.14~dnorm(0,0.0001)
+beta.15~dnorm(0,0.0001)
+beta.1f~dnorm(0,0.0001)
+beta.DBHs~dnorm(0,0.0001)
+beta.DBHf~dnorm(0,0.0001)
+beta.TPHs~dnorm(0,0.0001)
+beta.TPHf~dnorm(0,0.0001)
+}'
+
+writeLines(DC1modeljs,con="modeljs.txt")
+DC1js<-jags.model(file="modeljs.txt",data=dataDC1j, n.chains = 3, n.adapt=1000, quiet=FALSE)
+DC1jss<-coda.samples(DC1js,c("beta.12",  "beta.13" , "beta.14" , "beta.15", "beta.1f","beta.DBHs","beta.DBHf","beta.TPHs","beta.TPHf"),2000)
+
